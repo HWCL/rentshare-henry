@@ -98,3 +98,5 @@ if __name__ == '__main__':
 
 	session.commit()
 	print 'New Building (id: {})'.format(building.id)
+
+print "poop"
