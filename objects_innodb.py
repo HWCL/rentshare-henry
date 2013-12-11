@@ -2,8 +2,11 @@
 from sqlalchemy import Column, Integer, Float, String, Text, DateTime, Enum, ForeignKey, Date, Boolean
 from sqlalchemy.sql.expression import func, case
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, or_
 from sqlalchemy.orm import sessionmaker, relationship, backref
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy_fulltext import FullText, FullTextSearch
+import sqlalchemy_fulltext.modes as FullTextMode
 import datetime
 
 Base = declarative_base()
@@ -13,8 +16,8 @@ class Unit( Base ):
 
 	id 				= Column( Integer, primary_key=True )
 
-	#address_id 	= Column( Integer, ForeignKey( 'loc__address.id' ) )
-	#address   		= relationship( 'Address' )
+	address_id 		= Column( Integer, ForeignKey( 'loc__address.id' ) )
+	address   		= relationship( 'Address' )
 
 	property_id 	= Column( Integer, ForeignKey( 'property.id' ) )
 	building   		= relationship( 'Building' )
@@ -69,8 +72,9 @@ class Building( Base ):
 	id 			= Column( Integer, primary_key=True )
 	#address_id = Column( Integer, ForeignKey( 'loc__address.id' ) )
 
-class Invoice( Base ):
+class Invoice( FullText, Base ):
 	__tablename__ = 'payment__invoice'
+	__fulltext_columns__ = ['description', 'note']
 
 	id 							= Column( Integer, primary_key=True )
 
@@ -97,8 +101,8 @@ class Invoice( Base ):
 	paid 						= Column( Boolean, default=False )
 	paid_date 					= Column( DateTime, default=None )
 	custom 						= Column( Boolean, default = False )
-	description 				= Column( String, default='' )
-	note 						= Column( String, default='' )
+	description 				= Column( String(512), default='' )
+	note 						= Column( String(512), default='' )
 
 	is_template 				= Column( Boolean, default=False )
 	available_balance 			= Column( Float, default=0 )
@@ -166,9 +170,60 @@ class Property_Manager( Base ):
 
 	num_units 		= Column( Integer )
 
+class Address( FullText, Base ):
+    __tablename__ = 'loc__address'
+    __fulltext_columns__ = ['street_number', 'street_str', 'internal_address', 'city_str', 'zipcode_str', 'state_str', 'image_cache_url', 'image_source_url']
+
+    id               = Column( Integer, primary_key=True )
+    street_number    = Column( String(10) )
+    street_str       = Column( String(128) )
+    internal_address = Column( String(50) )
+    city_str         = Column( String(129) )
+    zipcode_str      = Column( String(5) )
+    state_str        = Column( String(2) )
+    image_cache_url  = Column( String(512) )
+    image_source_url = Column( String(512) )
+
+    @hybrid_property
+    def street_address(self):
+        return ((self.street_number + ' ') if self.street_number else '') + self.street_str
+
+    @hybrid_property
+    def city_state_zip(self):
+        return self.city_str.title() + ', ' + self.state_str + ' ' + self.zipcode_str
+
+class Account_Profile( FullText, Base ):
+	__tablename__ = 'account__profile'
+	__fulltext_columns__ = ['first_name', 'last_name', 'company', 'work_number', 'home_number', 'mobile_number', 'contact_email', \
+							'billing_address_name']
+
+	id = Column( Integer, primary_key=True)
+
+	#user_id 				= Column( Intger, ForeignKey('user__table.id') )
+
+	first_name 				= Column( String(32) )
+	last_name  				= Column( String(32) )
+	company    				= Column( String(56) )
+
+	work_number 			= Column( String(16) )
+	home_number				= Column( String(16) )
+	mobile_number 			= Column( String(16) )
+
+	contact_email 			= Column( String(64) )
+
+	address_id 				= Column( Integer, ForeignKey('loc__address.id') )
+	address 				= relationship( 'Address', foreign_keys=[address_id] )
+
+	billing_address_name 	= Column( String(56) )
+	billing_address_id 		= Column( Integer, ForeignKey('loc__address.id') )
+	billing_address			= relationship( 'Address', foreign_keys=[billing_address_id] )	
+
+	accepted_terms 			= Column( Boolean, default=False )
+
 
 _session = sessionmaker()
-_engine = create_engine( 'sqlite:///_rentshare_test.db' )
+#_engine = create_engine( 'sqlite:///_rentshare_test.db' )
+_engine = create_engine( 'mysql+pymysql://root:testtest@localhost/rentshare_test2' )
 _session.configure( bind=_engine )
 
 #_engine.dialect.has_table( _engine.connect(),
@@ -178,7 +233,7 @@ Base.metadata.create_all( _engine )
 if __name__ == '__main__':
 	session = _session()
 
-	if False:
+	if raw_input( 'Create dummies? (y/n)' ) == 'y':
 
 		#make some dummy units
 		u1 = Unit()
@@ -189,10 +244,12 @@ if __name__ == '__main__':
 		pa1 = Property_Access( status='verified' )
 		pa2 = Property_Access()
 		pa3 = Property_Access()
-
+		
 		#make some dummy managers
-		m1 = Property_Manager( master_manager=True, status='verified', num_units = 10 )
-		m2 = Property_Manager( master_manager=True, status='unknown', num_units = 43 )
+		#m1 = Property_Manager( master_manager=True, status='verified', num_units = 10 )
+		#m2 = Property_Manager( master_manager=True, status='unknown', num_units = 43 )
+		m1 = Property_Manager()
+		m2 = Property_Manager()
 
 		#make some dummy recurring invoices
 		ri1 = Recurring_Invoice()
@@ -214,9 +271,22 @@ if __name__ == '__main__':
 		lease2 = Lease( unit=u2, recurring_invoice=ri2 )
 		lease3 = Lease( unit=u3, recurring_invoice=ri3 )
 
+		#make some dummy addresses
+		addy1 = Address(street_number=123, street_str='street road', city_str='here')
+		addy2 = Address(street_number=456, street_str='street road', city_str='here')
+		addy3 = Address(street_number=7, street_str='broadway', city_str='new york')
+
+		#make some dummy account profiles
+		ap1 = Account_Profile(first_name='street', address = addy1)
+		ap2 = Account_Profile(first_name='henry', address = addy2)
+		ap3 = Account_Profile(first_name='broadway', address = addy3)
+
 		session.flush()
 		
-		
+		u1.address = addy1
+		u2.address = addy2
+		u3.address = addy3
+
 		u1.manager_access.append(pa1)
 		u2.manager_access.append(pa2)
 		u3.manager_access.append(pa3)
@@ -225,11 +295,18 @@ if __name__ == '__main__':
 		pa2.manager = m2
 		pa3.manager = m2
 		
-		session.add_all([u1, u2, u3, pa1, pa2, pa3, m1, m2, inv1, inv2, inv3, ip1, ip2, ip3])
+		session.add_all([u1, u2, u3, pa1, pa2, pa3, m1, m2, inv1, inv2, inv3, ip1, ip2, ip3, ap1, ap2, ap3])
 		session.commit()
 
 	#end making dummy values
+	"""
+	print dir(Account_Profile.address)
+	print Account_Profile.address.__dict__['key']
+	print Account_Profile.address.class_.__tablename__
+	print Account_Profile.__tablename__
+	"""
 
+	"""
 	qry = session.query( Unit )\
 		.join( Property_Access, Property_Access.unit_id == Unit.id )\
 		.join( Lease, Lease.unit_id == Unit.id )\
@@ -237,7 +314,8 @@ if __name__ == '__main__':
 		.join( Invoice, Invoice.parent_recurring_invoice_id == Recurring_Invoice.id )\
 		.join( Invoice_Payer, Invoice_Payer.invoice_id == Invoice.id )\
 		.filter( Invoice_Payer.amount_paid > 0 )\
-		.order_by( case( [(Property_Access.status == 'unknown', 0) ], else_=1 ))
+		.order_by( Property_Access.status )
+		#.order_by( case( [(Property_Access.status == 'unknown', 0) ], else_=1 ) )
 
 	print '======================================================'
 	for i in qry:
@@ -246,27 +324,61 @@ if __name__ == '__main__':
 		print 'Amount Paid: ', i.lease[0].recurring_invoice.invoices[0].payers[0].amount_paid
 		print '======================================================'
 
+	qry2 = session.query( Unit )\
+		.join( Property_Access, Property_Access.unit_id == Unit.id )\
+		.join( Lease, Lease.unit_id == Unit.id )\
+		.join( Recurring_Invoice, Lease.recurring_invoice_id == Recurring_Invoice.id )\
+		.join( Invoice, Invoice.parent_recurring_invoice_id == Recurring_Invoice.id )\
+		.join( Invoice_Payer, Invoice_Payer.invoice_id == Invoice.id )\
+		.filter( Invoice_Payer.amount_paid > 0 )\
+		.order_by( Property_Access.status )\
+		.filter( or_( Invoice_Payer.amount_paid.like('369'), Property_Access.status.like('verified') ) )
 
-	if False:
+	print '======================================================'
+	for i in qry2:
+		print 'Unit: ', i.id
+		print 'Access Status: ', i.manager_access[0].status
+		print 'Amount Paid: ', i.lease[0].recurring_invoice.invoices[0].payers[0].amount_paid
+		print '======================================================'
 
-		qry = session.query(Unit, Property_Access, Property_Manager)\
-			.order_by( Property_Manager.status )\
-			.filter( Property_Access.status == 'unknown' )\
-			.filter( Property_Manager.id == Property_Access.manager_id )\
-			.filter( Unit.id == Property_Access.unit_id )
+	
+	qry3 = session.query(Address, Account_Profile)\
+	.filter(Address.id == Account_Profile.address_id)\
+	.filter(FullTextSearch('+456 +Street', [Address.street_number, Address.street_str], mode=FullTextMode.BOOLEAN))#,\
+		#FullTextSearch('+456 +Street', [Account_Profile.first_name], mode=FullTextMode.BOOLEAN)))
 
-		for i in qry:
-			print 'Unit: ', i[0].id, ' ===  Property Access: ', i[1].id, ' ===  Property Manager: ', i[2].id
-		
-		print '\n================================================================================'
+	print '======================================================'
+	for i in qry3:
+		print i
+		print '======================================================'
 
-		qry = session.query( Unit )\
-			.join( Property_Access, Property_Access.unit_id == Unit.id )\
-			.join( Property_Manager, Property_Manager.id == Property_Access.manager_id )\
-			.order_by( Property_Manager.status )\
-			.filter( Property_Access.status == 'unknown' )
+	search_terms = raw_input("Search: ")
+	qry4 = session.query(Address, Account_Profile)\
+	.filter(Address.id == Account_Profile.address_id)\
+	.filter(or_(FullTextSearch('+456 +Street', Address, mode=FullTextMode.BOOLEAN), \
+				FullTextSearch('+456 +Street', Account_Profile, mode=FullTextMode.BOOLEAN)))
 
-		for i in qry:
-			print 'Unit: ', i.id, ' ===  Property Access: ', i.manager_access[0].id, ' ===  Property Manager: ', i.manager_access[0].manager.id
+	print '======================================================'
+	for i in qry4:
+		print i.__dict__['Address'].street_number, i.__dict__['Address'].street_str, '--',\
+			i.__dict__['Account_Profile'].first_name, i.__dict__['Account_Profile'].last_name
+		print '======================================================'
 
-	#end test queries
+	"""
+
+	search_terms = raw_input("Search: ")
+	qry5 = session.query(Address, Account_Profile)\
+	.filter(Address.id == Account_Profile.address_id)\
+	.filter(or_(FullTextSearch(search_terms, Address, mode=FullTextMode.BOOLEAN), \
+				FullTextSearch(search_terms, Account_Profile, mode=FullTextMode.BOOLEAN)))
+
+	count = 0
+	print '======================================================'
+	for i in qry5:
+		print count, '>>', i.__dict__['Address'].street_number, i.__dict__['Address'].street_str, '--',\
+			i.__dict__['Account_Profile'].first_name, i.__dict__['Account_Profile'].last_name
+
+		count += 1
+	
+	print '======================================================'
+	
